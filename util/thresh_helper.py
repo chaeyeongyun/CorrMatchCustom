@@ -13,13 +13,13 @@ class ThreshController:
     def new_global_mask_pooling(self, pred, ignore_mask=None):
         return_dict = {}
         n, c, h, w = pred.shape
-        pred_gather = torch.zeros([n * self.gpu_num, c, h, w]).cuda()
-        dist.all_gather_into_tensor(pred_gather, pred)
-        pred = pred_gather
-        if ignore_mask is not None:
-            ignore_mask_gather = torch.zeros([n * self.gpu_num, h, w]).cuda().long()
-            dist.all_gather_into_tensor(ignore_mask_gather, ignore_mask)
-            ignore_mask = ignore_mask_gather
+        # pred_gather = torch.zeros([n * self.gpu_num, c, h, w]).cuda()
+        # dist.all_gather_into_tensor(pred_gather, pred)
+        # pred = pred_gather
+        # if ignore_mask is not None:
+        #     ignore_mask_gather = torch.zeros([n * self.gpu_num, h, w]).cuda().long()
+        #     dist.all_gather_into_tensor(ignore_mask_gather, ignore_mask)
+        #     ignore_mask = ignore_mask_gather
         mask_pred = torch.argmax(pred, dim=1)
         pred_softmax = pred.softmax(dim=1)
         pred_conf = pred_softmax.max(dim=1)[0]
