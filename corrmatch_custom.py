@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 matplotlib.use('agg')
 import yaml
 
-from dataset.semi_custom import SemiCustomDataset
+from dataset.semi import SemiDataset
 from model.semseg.deeplabv3plus import DeepLabV3Plus
 from evaluate import evaluate
 from util.ohem import ProbOhemCrossEntropy2d
@@ -29,8 +29,8 @@ from util.thresh_helper import ThreshController
 from einops import rearrange
 import random
 
+from image_utils import save_img, make_test_detailed_img
 os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
-
 
 
 
@@ -50,20 +50,20 @@ def init_seeds(seed=0, cuda_deterministic=False):
 
 def main(args):
 
-
     cfg = yaml.load(open(args.config, "r"), Loader=yaml.Loader)
+    args.save_path = os.path.join(args.save_path, cfg["dataset"] + str(len(os.listdir(args.save_path))))
 
     logger = init_log('global', logging.INFO)
     logger.propagate = 0
 
-    #rank, word_size = setup_distributed(port=args.port)
+    # rank, word_size = setup_distributed(port=args.port)
     rank = 0;
-
     if rank == 0:
         logger.info('{}\n'.format(pprint.pformat(cfg)))
 
     if rank == 0:
         os.makedirs(args.save_path, exist_ok=True)
+        os.makedirs(os.path.join(args.save_path, "imgs"))
     init_seeds(0, False)
 
     model = DeepLabV3Plus(cfg)
@@ -77,9 +77,13 @@ def main(args):
                      {'params': [param for name, param in model.named_parameters() if 'backbone' not in name],
                       'lr': cfg['lr'] * cfg['lr_multi']}], lr=cfg['lr'], momentum=0.9, weight_decay=1e-4)
 
+    # local_rank = int(os.environ["LOCAL_RANK"])
     local_rank = 0
-    #model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+    model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     model.cuda()
+
+    # model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank],
+    #                                                   output_device=local_rank, find_unused_parameters=False)
 
     if cfg['criterion']['name'] == 'CELoss':
         criterion_l = nn.CrossEntropyLoss(**cfg['criterion']['kwargs']).cuda(local_rank)
@@ -91,21 +95,31 @@ def main(args):
     criterion_u = nn.CrossEntropyLoss(reduction='none').cuda(local_rank)
     criterion_kl = nn.KLDivLoss(reduction='none').cuda(local_rank)
 
-    trainset_u = SemiCustomDataset(cfg['dataset'], cfg['data_root'], 'train_u',
+    trainset_u = SemiDataset(cfg['dataset'], cfg['data_root'], 'train_u',
                              cfg['crop_size'])
-    trainset_l = SemiCustomDataset(cfg['dataset'], cfg['data_root'], 'train_l',
+    trainset_l = SemiDataset(cfg['dataset'], cfg['data_root'], 'train_l',
                              cfg['crop_size'])
+    valset = SemiDataset(cfg['dataset'], cfg['data_root'], 'test')
+
+    # trainsampler_l = torch.utils.data.distributed.DistributedSampler(trainset_l)
+    # trainloader_l = DataLoader(trainset_l, batch_size=cfg['batch_size'],
+    #                            pin_memory=False, num_workers=1, drop_last=True, sampler=trainsampler_l)
+    # trainsampler_u = torch.utils.data.distributed.DistributedSampler(trainset_u)
+    # trainloader_u = DataLoader(trainset_u, batch_size=cfg['batch_size'],
+    #                            pin_memory=False, num_workers=1, drop_last=True, sampler=trainsampler_u)
+    # valsampler = torch.utils.data.distributed.DistributedSampler(valset)
+    # valloader = DataLoader(valset, batch_size=1, pin_memory=True, num_workers=1,
+    #                        drop_last=False, sampler=valsampler)
 
     trainloader_l = DataLoader(trainset_l, batch_size=cfg['batch_size'],
                                pin_memory=False, num_workers=1, drop_last=True)
     trainloader_u = DataLoader(trainset_u, batch_size=cfg['batch_size'],
                                pin_memory=False, num_workers=1, drop_last=True)
-    valset = SemiCustomDataset(cfg['dataset'], cfg['test_root'], 'test')
     valloader = DataLoader(valset, batch_size=1, pin_memory=True, num_workers=1,
                            drop_last=False)
     total_iters = len(trainloader_u) * cfg['epochs']
     previous_best = 0.0
-    thresh_controller = ThreshController(nclass=3, momentum=0.999, thresh_init=cfg['thresh_init'])
+    thresh_controller = ThreshController(nclass=21, momentum=0.999, thresh_init=cfg['thresh_init'])
 
     for epoch in range(cfg['epochs']):
         if rank == 0:
@@ -128,7 +142,10 @@ def main(args):
         for i, ((img_x, mask_x),
                 (img_u_w, img_u_s1, _, ignore_mask, cutmix_box1, _),
                 (img_u_w_mix, img_u_s1_mix, _, ignore_mask_mix, _, _)) in enumerate(loader):
-
+            ##debug
+            # if i == 3:
+            #     break
+            ##debug
             img_x, mask_x = img_x.cuda(), mask_x.cuda()
             img_u_w = img_u_w.cuda()
             img_u_s1, ignore_mask = img_u_s1.cuda(), ignore_mask.cuda()
@@ -271,14 +288,16 @@ def main(args):
         if rank == 0:
             tbar.close()
 
-        if cfg['dataset'] == 'cityscapes':
-            eval_mode = 'center_crop' if epoch < cfg['epochs'] - 20 else 'sliding_window'
-        else:
-            eval_mode = 'original'
+        # if cfg['dataset'] == 'cityscapes':
+        #     eval_mode = 'center_crop' if epoch < cfg['epochs'] - 20 else 'sliding_window'
+        # else:
+        #     eval_mode = 'original'
+        eval_mode = 'original'
         torch.cuda.empty_cache()
-        res_val = evaluate(model, valloader, eval_mode, cfg)
+        res_val, img_ret = evaluate(model, valloader, eval_mode, cfg)
         mIOU = res_val['mIOU']
         class_IOU = res_val['iou_class']
+        # torch.distributed.barrier()
 
         if rank == 0:
             logger.info('***** Evaluation {} ***** >>>> meanIOU: {:.4f} \n'.format(eval_mode, mIOU))
@@ -288,15 +307,19 @@ def main(args):
             if previous_best != 0:
                 os.remove(os.path.join(args.save_path, '%s_%.3f.pth' % (cfg['backbone'], previous_best)))
             previous_best = mIOU
-            torch.save(model.module.state_dict(), os.path.join(args.save_path, '%s_%.3f.pth' % (cfg['backbone'], mIOU)))
+            # torch.save(model.module.state_dict(), os.path.join(args.save_path, '%s_%.3f.pth' % (cfg['backbone'], mIOU)))
+            torch.save(model.state_dict(), os.path.join(args.save_path, '%s_%.3f.pth' % (cfg['backbone'], mIOU)))
+            img_save_path = os.path.join(args.save_path, "imgs")
+            for viz in img_ret:
+                save_img(img_save_path, viz[1], viz[0])
+        # torch.distributed.barrier()
         torch.cuda.empty_cache()
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Semi-Supervised Semantic Segmentation')
     parser.add_argument('--config', type=str, default="./configs/CWFID_percent30.yaml")
-    parser.add_argument('--root', type=str, default="../semi_sup_data/CWFID/percent_10/train")
-    parser.add_argument('--save-path', type=str, default="./save_files")
+    parser.add_argument('--save-path', type=str, default="./save_file")
     parser.add_argument('--local_rank', default=0, type=int)
     parser.add_argument('--port', default=None, type=int)
     args = parser.parse_args()
