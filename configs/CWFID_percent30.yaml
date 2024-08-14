@@ -2,8 +2,7 @@
 dataset: CWFID_percent30
 nclass: 3
 crop_size: 321
-data_root: ../semi_sup_data/CWFID/percent_30/train
-test_root: ../semi_sup_data/CWFID/percent_30/test
+data_root: ../semi_sup_data/CWFID/percent_30
 
 # arguments for training
 epochs: 80
@@ -17,8 +16,8 @@ criterion:
 thresh_init: 0.85
 
 # arguments for model
-backbone: resnet101
-pretrain: False
+backbone: resnet50
+pretrain: True
 multi_grid: False
 replace_stride_with_dilation: [False, True, True]
 #dilations: [6, 12, 18]
