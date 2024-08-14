@@ -6,16 +6,22 @@ from PIL import Image, ImageOps, ImageFilter, ImageEnhance
 import torch
 from torchvision import transforms
 
+def img_to_label(target_img:torch.Tensor, pixel_to_label_dict:dict={0:0, 128:1, 255:2}):
+    pixels = list(pixel_to_label_dict.keys())
+    output = target_img
+    for pixel in pixels:
+        output = torch.where(output==int(pixel), pixel_to_label_dict[pixel], output)
+    return output.long()
 
 def crop(img, mask, size, ignore_value=255):
     w, h = img.size
     padw = size - w if w < size else 0
     padh = size - h if h < size else 0
-    img = ImageOps.expand(img, border=(0, 0, padw, padh), fill=0) # 테두리 확장
-    mask = ImageOps.expand(mask, border=(0, 0, padw, padh), fill=ignore_value) # 테두리 확장
+    img = ImageOps.expand(img, border=(0, 0, padw, padh), fill=0)
+    mask = ImageOps.expand(mask, border=(0, 0, padw, padh), fill=ignore_value)
 
     w, h = img.size
-    x = random.randint(0, w - size) # 좌상단좌표 
+    x = random.randint(0, w - size)
     y = random.randint(0, h - size)
     img = img.crop((x, y, x + size, y + size))
     mask = mask.crop((x, y, x + size, y + size))
@@ -30,6 +36,16 @@ def hflip(img, mask, p=0.5):
     return img, mask
 
 
+# def normalize(img, mask=None):
+#     img = transforms.Compose([
+#         transforms.ToTensor(),
+#         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+#     ])(img)
+#     if mask is not None:
+#         mask = torch.from_numpy(np.array(mask)).long()
+#         return img, mask
+#     return img
+
 def normalize(img, mask=None):
     img = transforms.Compose([
         transforms.ToTensor(),
@@ -37,9 +53,9 @@ def normalize(img, mask=None):
     ])(img)
     if mask is not None:
         mask = torch.from_numpy(np.array(mask)).long()
+        mask = img_to_label(mask)
         return img, mask
     return img
-
 
 def resize_certain(img, ratio_range):
     w, h = img.size
