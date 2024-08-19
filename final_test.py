@@ -169,38 +169,38 @@ def evaluate(model, loader, mode, cfg, checkpoint_path):
     result_txt += f"\niou per class {list(map(lambda x: round(x, 4), test_ious))}"
     result_txt += f"\nprecision : {test_precision:.4f}, recall : {test_recall:.4f}, f1score : {test_f1score:.4f} " 
     print(result_txt)
-    result_save_path = "./test_save_files/"+cfg["dataset"]+"_test"
+    result_save_path = os.path.join(".", "test_save_files", cfg["dataset"]+"_test")
     os.makedirs(result_save_path, exist_ok=True)
-    with open(os.path.join(result_save_path,"result.txt")) as f:
+    with open(os.path.join(result_save_path,"result.txt"), "w") as f:
         f.write(result_txt)
 
     return return_dict, img_ret
 def main():
     parser = argparse.ArgumentParser(description='Semi-Supervised Semantic Segmentation')
-    parser.add_argument('--config', type=str, required=True)
-    parser.add_argument('--checkpoint_path', type=str, required=True)
+    parser.add_argument('--config', type=str, default="./configs/CWFID_percent30.yaml")
+    parser.add_argument('--checkpoint_path', type=str, default="D:/CorrMatch/save_file/CWFID_percent301/resnet50_35.471.pth")
     parser.add_argument('--local_rank', default=0, type=int)
     parser.add_argument('--port', default=None, type=int)
     args = parser.parse_args()
-    setup_distributed(port=args.port)
+    # setup_distributed(port=args.port)
     cfg = yaml.load(open(args.config, "r"), Loader=yaml.Loader)
 
     model = DeepLabV3Plus(cfg)
     model.load_state_dict(torch.load(args.checkpoint_path))
-    model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+    # model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     model.cuda()
 
-    local_rank = int(os.environ["LOCAL_RANK"])
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank],
-                                                      output_device=local_rank, find_unused_parameters=False)
+    local_rank = 0
+    # model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank],
+    #                                                   output_device=local_rank, find_unused_parameters=False)
 
-    valset = SemiDataset(cfg['dataset'], cfg['data_root'], 'val')
-    valsampler = torch.utils.data.distributed.DistributedSampler(valset)
-    valloader = DataLoader(valset, batch_size=1, pin_memory=True, num_workers=4,
-                           drop_last=False, sampler=valsampler)
+    valset = SemiDataset(cfg['dataset'], cfg['data_root'], 'test')
+    # valsampler = torch.utils.data.distributed.DistributedSampler(valset)
+    valloader = DataLoader(valset, batch_size=1, pin_memory=True, num_workers=1,
+                           drop_last=False)
 
     model.eval()
-    res_val = evaluate(model, valloader, 'original', cfg, args.checkpoint_path)
+    res_val, img_ret = evaluate(model, valloader, 'original', cfg, args.checkpoint_path)
     mIOU = res_val['mIOU']
     iou_class = res_val['iou_class']
     print(mIOU)
