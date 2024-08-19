@@ -44,7 +44,7 @@ class SemiDataset(Dataset):
         id = self.ids[item]
         img = Image.open(os.path.join(self.root, "input", id)).convert('RGB')
         if (self.mode == "train_l") or (self.mode == "test"):
-            mask = Image.fromarray(np.array(Image.open(os.path.join(self.root, "target", id))))
+            mask = Image.fromarray(np.array(Image.open(os.path.join(self.root, "target", id)).convert("L")))
         else:
             mask = Image.fromarray(np.zeros(img.size))
 
@@ -60,8 +60,7 @@ class SemiDataset(Dataset):
         
         if self.mode == "train_l" :
             return normalize(img, mask)
-        if self.mode == "test":
-            return normalize(img, mask), id
+
                 
         img_w, img_s1, img_ori = deepcopy(img), deepcopy(img), deepcopy(img)
         img_ori = np.array(img_ori)
