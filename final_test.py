@@ -173,7 +173,11 @@ def evaluate(model, loader, mode, cfg, checkpoint_path):
     os.makedirs(result_save_path, exist_ok=True)
     with open(os.path.join(result_save_path,"result.txt"), "w") as f:
         f.write(result_txt)
-
+        
+    img_save_path = os.path.join(result_save_path, "imgs")
+    os.makedirs(img_save_path, exist_ok=True)
+    for viz in img_ret:
+        save_img(img_save_path, viz[1], viz[0])
     return return_dict, img_ret
 def main():
     parser = argparse.ArgumentParser(description='Semi-Supervised Semantic Segmentation')
